@@ -2,7 +2,7 @@
   "domain": "envertech_local",
   "name": "Envertech",
   "version": "1.0.2",
-  "documentation": "",
+  "documentation": "https://github.com/Kaiserdragon2/Envertech_local",
   "dependencies": [],
   "codeowners": ["@Kaiserdragon2"],
   "requirements": [],
