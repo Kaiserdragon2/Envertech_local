@@ -1,3 +1,3 @@
 
-DOMAIN = "envertectcp_local"
+DOMAIN = "envertech_local"
 CONFIG = {}
