@@ -1,5 +1,6 @@
 {
   "domain": "envertech_local",
+  "name": "Envertech",
   "codeowners": ["@Kaiserdragon2"],
   "config_flow": true,
   "dependencies": [],
@@ -7,7 +8,6 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Kaiserdragon2/Envertech_local/issues",
-  "name": "Envertech",
   "requirements": [],
   "version": "1.0.2"
 }
