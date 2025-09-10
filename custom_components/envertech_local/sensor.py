@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import timedelta
 
-from .const import DOMAIN, CONFIG
+from .const import DOMAIN
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -27,7 +27,6 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-
 
 SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -81,10 +80,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
 _LOGGER = logging.getLogger(__name__)
 
-INVERTER_IP = None
-PORT = None
-SN = None
-
 OFFSET_TABLE = [
     {
         "mi_sn": 20,
@@ -124,7 +119,6 @@ OFFSET_TABLE = [
     },
 ]
 
-
 def check_cs(byte_array):
     return (sum(byte_array) + 85) & 0xFF
 
@@ -134,14 +128,11 @@ def hex_string_to_bytes(hex_str):
     hex_str = hex_str.strip().replace(" ", "")
     return bytes.fromhex(hex_str)
 
-
 def to_int16(byte1, byte2):
     return byte1 * 256 + byte2
 
-
 def to_int32(byte1, byte2, byte3, byte4):
     return (byte1 << 24) + (byte2 << 16) + (byte3 << 8) + byte4
-
 
 def start_send_data(current_id_hex: str) -> bytes:
     data = bytearray()
@@ -168,7 +159,6 @@ def start_send_data(current_id_hex: str) -> bytes:
     data.append(0x16)
 
     return bytes(data)
-
 
 def parse_module_data(data, offset):
     try:
@@ -212,12 +202,16 @@ def parse_module_data(data, offset):
 
 
 class InverterSocketCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant):
+    def __init__(self, hass: HomeAssistant, ip: str, port: int, sn: str):
         super().__init__(
             hass,
             _LOGGER,
             name="inverter_socket",
         )
+        self.ip = ip
+        self.port = port
+        self.sn = sn
+
         self.data = {}
         self.device_id = "unknown"  # default until parsed
         self.module_ids = {}
@@ -230,12 +224,12 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
             try:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sock.settimeout(100)
-                self.sock.connect((INVERTER_IP, PORT))
+                self.sock.connect((self.ip, self.port))
                 _LOGGER.info("Connected to inverter.")
                 while self.running:
                     raw = self.sock.recv(1024)
                     if len(raw) == 32:
-                        self.sock.sendall(start_send_data(SN))
+                        self.sock.sendall(start_send_data(self.sn))
                         raw = self.sock.recv(1024)
                     data = list(raw)
                     device_id = "".join(f"{b:02x}" for b in data[6:10])
@@ -307,7 +301,6 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success
 
-
 class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, key, name, unit):
         super().__init__(coordinator)
@@ -340,12 +333,9 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success
 
-
 async def async_setup_entry(hass, entry, async_add_entities):
-    global INVERTER_IP, PORT, SN
-    cfg = CONFIG[entry.entry_id]
-    INVERTER_IP, SN, PORT = cfg["ip"], cfg["sn"], cfg["port"]
-    coordinator = InverterSocketCoordinator(hass)
+    # Get the coordinator from hass.data where it was stored in __init__.py
+    coordinator = hass.data["envertech_local"][entry.entry_id]
 
     entities = []
 
@@ -353,7 +343,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for description in SENSOR_TYPES:
             entities.append(InverterModuleSensor(coordinator, i, description))
 
-    # Add combined sensors manually (can be extracted into their own description later)
+    # Add combined sensors manually
     entities.append(
         InverterCombinedSensor(coordinator, "power", "Total Power", UnitOfPower.WATT)
     )
