@@ -1,0 +1,25 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Inverter Monitor Setup",
+        "description": "Configure the IP and Port of your inverter",
+        "data": {
+          "ip_address": "Inverter IP Address",
+          "port": "TCP Port"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "input_voltage": { "name": "Input Voltage" },
+      "power": { "name": "Power" },
+      "energy": { "name": "Energy" },
+      "temperature": { "name": "Temperature" },
+      "grid_voltage": { "name": "Grid Voltage" },
+      "frequency": { "name": "Frequency" },
+      "module_serial": { "name": "Module Serial Number" }
+    }
+  }
+}

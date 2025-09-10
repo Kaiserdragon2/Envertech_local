@@ -1,0 +1,368 @@
+import socket
+import binascii
+import logging
+import threading
+import time
+from datetime import timedelta
+
+from .const import DOMAIN, CONFIG
+
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorStateClass,
+    SensorEntityDescription,
+    SensorDeviceClass,
+)
+from homeassistant.const import (
+    UnitOfTemperature,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfElectricPotential,
+    UnitOfFrequency,
+    EntityCategory
+)
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    CoordinatorEntity,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+
+
+SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="input_voltage",
+        translation_key="input_voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.VOLTAGE,
+    ),
+    SensorEntityDescription(
+        key="power",
+        translation_key="power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.POWER,
+    ),
+    SensorEntityDescription(
+        key="energy",
+        translation_key="energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.ENERGY,
+    ),
+    SensorEntityDescription(
+        key="temperature",
+        translation_key="temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+    ),
+    SensorEntityDescription(
+        key="grid_voltage",
+        translation_key="grid_voltage",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.VOLTAGE,
+    ),
+    SensorEntityDescription(
+        key="frequency",
+        translation_key="frequency",
+        native_unit_of_measurement=UnitOfFrequency.HERTZ,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.FREQUENCY,
+    ),
+    SensorEntityDescription(
+        key="mi_sn",
+        translation_key="module_serial",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+INVERTER_IP = None
+PORT = None
+SN = None
+
+OFFSET_TABLE = [
+    {
+        "mi_sn": 20,
+        "input_voltage": 26,
+        "power": 28,
+        "energy": 30,
+        "temperature": 34,
+        "grid_voltage": 36,
+        "frequency": 38,
+    },
+    {
+        "mi_sn": 52,
+        "input_voltage": 58,
+        "power": 60,
+        "energy": 62,
+        "temperature": 66,
+        "grid_voltage": 68,
+        "frequency": 70,
+    },
+    {
+        "mi_sn": 84,
+        "input_voltage": 90,
+        "power": 92,
+        "energy": 94,
+        "temperature": 98,
+        "grid_voltage": 100,
+        "frequency": 102,
+    },
+    {
+        "mi_sn": 116,
+        "input_voltage": 122,
+        "power": 124,
+        "energy": 126,
+        "temperature": 130,
+        "grid_voltage": 132,
+        "frequency": 134,
+    },
+]
+
+
+def check_cs(byte_array):
+    return (sum(byte_array) + 85) & 0xFF
+
+
+def hex_string_to_bytes(hex_str):
+    """Convert hex string to byte array."""
+    hex_str = hex_str.strip().replace(" ", "")
+    return bytes.fromhex(hex_str)
+
+
+def to_int16(byte1, byte2):
+    return byte1 * 256 + byte2
+
+
+def to_int32(byte1, byte2, byte3, byte4):
+    return (byte1 << 24) + (byte2 << 16) + (byte3 << 8) + byte4
+
+
+def start_send_data(current_id_hex: str) -> bytes:
+    data = bytearray()
+
+    # Fixed header
+    data += bytes([0x68, 0x00, 0x20, 0x68, 0x10, 0x46])
+
+    # Add currentID bytes
+    try:
+        current_id_bytes = hex_string_to_bytes(current_id_hex)
+        data += current_id_bytes
+    except ValueError as e:
+        print(f"Invalid hex string for currentID: {e}")
+        return b""
+
+    # Pad with 20 zero bytes
+    data += bytes([0x00] * 20)
+
+    # Compute and add checksum
+    checksum = check_cs(data)
+    data.append(checksum)
+
+    # End byte
+    data.append(0x16)
+
+    return bytes(data)
+
+
+def parse_module_data(data, offset):
+    try:
+        return {
+            "mi_sn": "".join(f'{data[offset["mi_sn"]+i]:02x}' for i in range(4)),
+            "input_voltage": to_int16(
+                data[offset["input_voltage"]], data[offset["input_voltage"] + 1]
+            )
+            * 64
+            / 32768,
+            "power": to_int16(data[offset["power"]], data[offset["power"] + 1])
+            * 512
+            / 32768,
+            "energy": to_int32(
+                data[offset["energy"]],
+                data[offset["energy"] + 1],
+                data[offset["energy"] + 2],
+                data[offset["energy"] + 3],
+            )
+            * 4
+            / 32768,
+            "temperature": to_int16(
+                data[offset["temperature"]], data[offset["temperature"] + 1]
+            )
+            * 256
+            / 32768
+            - 40,
+            "grid_voltage": to_int16(
+                data[offset["grid_voltage"]], data[offset["grid_voltage"] + 1]
+            )
+            * 512
+            / 32768,
+            "frequency": to_int16(
+                data[offset["frequency"]], data[offset["frequency"] + 1]
+            )
+            * 128
+            / 32768,
+        }
+    except IndexError:
+        return None
+
+
+class InverterSocketCoordinator(DataUpdateCoordinator):
+    def __init__(self, hass: HomeAssistant):
+        super().__init__(
+            hass,
+            _LOGGER,
+            name="inverter_socket",
+            update_interval=timedelta(seconds=15),
+            update_method=None,
+        )
+        self.data = {}
+        self.device_id = "unknown"  # default until parsed
+        self.module_ids = {}
+        self.sock = None
+        self.running = True
+        threading.Thread(target=self.reader_loop, daemon=True).start()
+
+    def reader_loop(self):
+        while self.running:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.settimeout(100)
+                self.sock.connect((INVERTER_IP, PORT))
+                _LOGGER.info("Connected to inverter.")
+                while self.running:
+                    raw = self.sock.recv(1024)
+                    if len(raw) == 32:
+                        self.sock.sendall(start_send_data(SN))
+                        raw = self.sock.recv(1024)
+                    data = list(raw)
+                    device_id = "".join(f"{b:02x}" for b in data[6:10])
+                    for i, offset in enumerate(OFFSET_TABLE):
+                        parsed = parse_module_data(data, offset)
+                        if parsed:
+                            for key, val in parsed.items():
+                                if isinstance(val, (int, float)):
+                                    self.data[f"{i}_{key}"] = round(val, 2)
+                                else:
+                                    self.data[f"{i}_{key}"] = val
+                    self.hass.loop.call_soon_threadsafe(
+                        self.async_set_updated_data, self.data
+                    )
+
+            except Exception as e:
+                _LOGGER.error(f"Inverter socket error: {e}")
+                time.sleep(5)
+
+    async def async_close(self):
+        self.running = False
+        if self.sock:
+            self.sock.close()
+
+    @property
+    def unique_device_id(self):
+        return getattr(self, "device_id", "unknown")
+
+
+class InverterModuleSensor(CoordinatorEntity, SensorEntity):
+    def __init__(
+        self, coordinator, module_index: int, description: SensorEntityDescription
+    ):
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._module_index = module_index
+        self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
+        self._attr_unique_id = (
+            f"EVT_{self.coordinator.unique_device_id}_P{module_index}_{description.key}"
+        )
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_state_class = description.state_class
+        self._attr_device_class = description.device_class
+        self._attr_entity_category = description.entity_category
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get(
+            f"{self._module_index}_{self.entity_description.key}"
+        )
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "serial_number": self.coordinator.data.get(f"{self._module_index}_mi_sn")
+        }
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={
+                (DOMAIN, f"EVT_{self.coordinator.unique_device_id}")
+            },  # unique device id
+            name="EVT",
+            manufacturer="Envertech",
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
+    def __init__(self, coordinator, key, name, unit):
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_name = name
+        self._attr_unique_id = f"EVT_{self.coordinator.unique_device_id}_combined_{key}"
+        self._attr_native_unit_of_measurement = unit
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self):
+        total = 0.0
+        valid = False
+        for i in range(4):
+            val = self.coordinator.data.get(f"{i}_{self._key}")
+            if isinstance(val, (int, float)):
+                total += val
+                valid = True
+        return round(total, 2) if valid else None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"EVT_{self.coordinator.unique_device_id}")},
+            name="EVT",
+            manufacturer="Envertec",
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+async def async_setup_entry(hass, entry, async_add_entities):
+    global INVERTER_IP, PORT, SN
+    cfg = CONFIG[entry.entry_id]
+    INVERTER_IP, SN, PORT = cfg["ip"], cfg["sn"], cfg["port"]
+    coordinator = InverterSocketCoordinator(hass)
+
+    entities = []
+
+    for i in range(4):
+        for description in SENSOR_TYPES:
+            entities.append(InverterModuleSensor(coordinator, i, description))
+
+    # Add combined sensors manually (can be extracted into their own description later)
+    entities.append(
+        InverterCombinedSensor(coordinator, "power", "Total Power", UnitOfPower.WATT)
+    )
+    entities.append(
+        InverterCombinedSensor(
+            coordinator, "energy", "Total Energy", UnitOfEnergy.KILO_WATT_HOUR
+        )
+    )
+
+    async_add_entities(entities)
