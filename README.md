@@ -11,7 +11,21 @@ This integration allows you to connect your Envertech solar micro inverters to H
 - No cloud dependency required
 
 ## Installation
-[Installation instructions will be added]
+
+### 🧰 Via HACS (recommended)
+1. In HACS, go to **Integrations** → three dots menu → **Custom repositories**.
+2. Add this repository:  
+   `https://github.com/Kaiserdragon2/Envertech_local`
+3. Search for **Envertech Local** in HACS and install.
+4. Restart Home Assistant.
+5. Go to **Settings → Devices & Services → + Add Integration**, search for "Envertech".
+6. Follow the config flow.
+
+### 🛠️ Manual Installation
+1. Download or clone this repository.
+2. Copy the folder `envertech_local` to:  
+   `custom_components/envertech_local/` inside your Home Assistant config directory.
+3. Restart Home Assistant and follow the same setup as above.
 
 ## Configuration
 [Configuration details will be added]
