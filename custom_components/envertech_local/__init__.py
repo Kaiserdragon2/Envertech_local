@@ -2,6 +2,7 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_IP_ADDRESS, CONF_PORT, CONF_UNIQUE_ID
+from homeassistant.helpers import config_validation as cv
 
 from .sensor import InverterSocketCoordinator
 from .const import DOMAIN
@@ -9,6 +10,8 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: dict):
     return True
