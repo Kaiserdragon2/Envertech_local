@@ -3,6 +3,7 @@
   "name": "Envertech",
   "version": "1.0.2",
   "documentation": "https://github.com/Kaiserdragon2/Envertech_local",
+  "issue_tracker": "https://github.com/Kaiserdragon2/Envertech_local/issues",
   "dependencies": [],
   "codeowners": ["@Kaiserdragon2"],
   "requirements": [],
