@@ -217,8 +217,6 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name="inverter_socket",
-            update_interval=timedelta(seconds=15),
-            update_method=None,
         )
         self.data = {}
         self.device_id = "unknown"  # default until parsed
