@@ -1,8 +1,6 @@
 import socket
 import binascii
 import logging
-import threading
-import time
 import asyncio
 from datetime import timedelta
 
@@ -111,7 +109,6 @@ SENSOR_TYPES_SINGLE: tuple[SensorEntityDescription, ...] = (
 
 _LOGGER = logging.getLogger(__name__)
 
-
 def check_cs(byte_array):
     return (sum(byte_array) + 85) & 0xFF
 
@@ -215,22 +212,21 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.running = True
         self.number_of_panels = 0
         self.data_ready = False  # Add a flag to track data readiness
-        threading.Thread(target=self.reader_loop, daemon=True).start()
 
-    def reader_loop(self):
+    async def reader_loop(self):
         while self.running:
             try:
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.settimeout(300)
-                self.sock.connect((self.ip, self.port))
+                reader, writer = await asyncio.open_connection(self.ip, self.port)
                 _LOGGER.info("Connected to inverter.")
+
                 while self.running:
-                    raw = self.sock.recv(1024)
+                    raw = await asyncio.wait_for(reader.read(1024), timeout=300)
 
                     if not raw:
                         _LOGGER.warning("Socket closed by inverter.")
                         break
-                        # Check length and headers
+
+                    # Check length and headers
                     if len(raw) < 16:
                         _LOGGER.warning(
                             "Received incomplete packet: length=%d, expected=%d",
@@ -238,6 +234,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                             16,
                         )
                         continue
+
                     # Check headers
                     if raw[0] != 0x68 or raw[3] != 0x68:
                         _LOGGER.warning("Invalid packet header")
@@ -252,15 +249,15 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         )
                         continue
                     if len(raw) == 32:
-                        self.sock.sendall(start_send_data(self.sn))
-                        raw = self.sock.recv(1024)
+                        writer.write(start_send_data(self.sn))
+                        await writer.drain()
+                        raw = await asyncio.wait_for(reader.read(1024), timeout=300)
+
                     control_code = int.from_bytes(raw[4:6], "big")
                     if control_code == 4177:
                         data = list(raw)
-                        device_id = "".join(f"{b:02x}" for b in data[6:10])
                         self.number_of_panels = (len(raw) - 22) // 32
-                        firmware_version = f"{data[11]}.{data[13]:02d}"
-                        self.data["firmware_version"] = firmware_version
+                        self.data["firmware_version"] = f"{data[10]}/{data[12]}"
                         for i in range(self.number_of_panels):
                             base_offset = 20 + i * 32
                             offset = {
@@ -290,6 +287,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                                     total += val
                                     valid = True
                             self.data[f"total_{key}"] = round(total, 2) if valid else None
+
                         # Set the data_ready flag once we have the data
                         self.data_ready = True
                         self.hass.loop.call_soon_threadsafe(
@@ -297,9 +295,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         )
             except Exception as e:
                 _LOGGER.error(f"Inverter socket error: {e}")
-                time.sleep(5)
-
-    
+                await asyncio.sleep(5)
 
     async def async_close(self):
         self.running = False
@@ -361,10 +357,11 @@ class InverterSensor(CoordinatorEntity, SensorEntity):
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    
     # Wait for the coordinator's reader_loop to set data_ready to True
     while not coordinator.data_ready:
         _LOGGER.debug("Waiting for inverter data to be ready...")
-        await asyncio.sleep(5)  # Sleep for a short time and check again
+        await asyncio.sleep(1)  # Sleep for a short time and check again
 
     if coordinator.number_of_panels == 0:
         _LOGGER.error("No panels detected.")
