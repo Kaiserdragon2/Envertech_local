@@ -3,6 +3,7 @@ import binascii
 import logging
 import threading
 import time
+import asyncio
 from datetime import timedelta
 
 from .const import DOMAIN
@@ -252,12 +253,16 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                                     else:
                                         self.data[f"{i}_{key}"] = val
 
+                        # Set the data_ready flag once we have the data
+                        self.data_ready = True
                         self.hass.loop.call_soon_threadsafe(
                             self.async_set_updated_data, self.data
                         )
             except Exception as e:
                 _LOGGER.error(f"Inverter socket error: {e}")
                 time.sleep(5)
+
+    
 
     async def async_close(self):
         self.running = False
@@ -342,7 +347,10 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    await coordinator.async_refresh()
+    # Wait for the coordinator's reader_loop to set data_ready to True
+    while not coordinator.data_ready:
+        _LOGGER.debug("Waiting for inverter data to be ready...")
+        await asyncio.sleep(5)  # Sleep for a short time and check again
 
     if coordinator.number_of_panels == 0:
         _LOGGER.error("No panels detected.")
