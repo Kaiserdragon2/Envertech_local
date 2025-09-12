@@ -190,6 +190,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.sock = None
         self.running = True
         self.number_of_panels = 0
+        self.data_ready = False  # Add a flag to track data readiness
         threading.Thread(target=self.reader_loop, daemon=True).start()
 
     def reader_loop(self):
