@@ -240,7 +240,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         _LOGGER.warning("Invalid packet header")
                         continue
 
-                    expected_length = int.from_bytes(data[1:3], "big")
+                    expected_length = int.from_bytes(raw[1:3], "big")
                     if len(raw) != expected_length:
                         _LOGGER.warning(
                             "Length mismatch: expected %d bytes from length field, got %d",
@@ -250,7 +250,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if len(raw) == 32:
                         self.sock.sendall(start_send_data(self.sn))
                         raw = self.sock.recv(1024)
-                    control_code = int.from_bytes(data[4:6], "big")
+                    control_code = int.from_bytes(raw[4:6], "big")
                     if control_code == 4177:
                         data = list(raw)
                         device_id = "".join(f"{b:02x}" for b in data[6:10])
