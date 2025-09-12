@@ -20,7 +20,9 @@
       "grid_voltage": { "name": "Grid Voltage" },
       "frequency": { "name": "Frequency" },
       "module_serial": { "name": "Module Serial Number" },
-      "firmware_version": { "name": "Firmware Version"}
+      "firmware_version": { "name": "Firmware Version"},
+      "total_energy": { "name": "Total Energy"},
+      "total_power": { "name": "Total Power"}
     }
   }
 }

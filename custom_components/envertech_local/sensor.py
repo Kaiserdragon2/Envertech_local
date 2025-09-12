@@ -83,10 +83,29 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         translation_key="module_serial",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-        SensorEntityDescription(
+)
+
+SENSOR_TYPES_SINGLE: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
         key="firmware_version",
         translation_key="firmware_version",
         entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SensorEntityDescription(
+        key="total_energy",
+        translation_key="total_energy",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        device_class=SensorDeviceClass.ENERGY,
+        suggested_display_precision=2,
+    ),
+    SensorEntityDescription(
+        key="total_power",
+        translation_key="total_power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        device_class=SensorDeviceClass.POWER,
+        suggested_display_precision=2,
     ),
 )
 
@@ -261,6 +280,16 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                                     else:
                                         self.data[f"{i}_{key}"] = val
 
+                        # Update combined sensors
+                        for key in ["power", "energy"]:
+                            total = 0.0
+                            valid = False
+                            for i in range(self.coordinator.number_of_panels):
+                                val = self.coordinator.data.get(f"{i}_{self._key}")
+                                if isinstance(val, (int, float)):
+                                    total += val
+                                    valid = True
+                            self.data[f"total_{key}"] = round(total, 2) if valid else None
                         # Set the data_ready flag once we have the data
                         self.data_ready = True
                         self.hass.loop.call_soon_threadsafe(
@@ -318,52 +347,40 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success
 
-
-class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator, key, name, unit):
+class InverterModuleSensorSingle(CoordinatorEntity, SensorEntity):
+    def __init__(
+        self, coordinator, module_index: int, description: SensorEntityDescription
+    ):
         super().__init__(coordinator)
-        self._key = key
-        self._attr_name = name
-        self._attr_unique_id = f"EVT_{self.coordinator.sn}_combined_{key}"
-        self._attr_native_unit_of_measurement = unit
-        self._attr_state_class = (SensorStateClass.MEASUREMENT
-            if key == "power"
-            else SensorStateClass.TOTAL_INCREASING
-            if key == "energy"
-            else None
-        )
-        self._attr_device_class = (
-            SensorDeviceClass.POWER
-            if key == "power"
-            else SensorDeviceClass.ENERGY
-            if key == "energy"
-            else None
-        )
-        self._attr_suggested_display_precision = 2
+        self.entity_description = description
+        self._module_index = module_index
+        self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
+        self._attr_unique_id = (f"EVT_{self.coordinator.sn}_{description.key}")
+        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
+        self._attr_state_class = description.state_class
+        self._attr_device_class = description.device_class
+        self._attr_entity_category = description.entity_category
 
     @property
     def native_value(self):
-        total = 0.0
-        valid = False
-        for i in range(self.coordinator.number_of_panels):
-            val = self.coordinator.data.get(f"{i}_{self._key}")
-            if isinstance(val, (int, float)):
-                total += val
-                valid = True
-        return round(total, 2) if valid else None
-
+        return self.coordinator.data.get(
+            f"{self._module_index}_{self.entity_description.key}"
+        )
+    @property
+    def extra_state_attributes(self):
+        return {
+            "serial_number": self.coordinator.data.get(f"{self._module_index}_mi_sn")
+        }
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},
+            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},  # unique device id
             name="EVT",
             manufacturer="Envertech",
         )
-
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success
-
 
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
@@ -383,14 +400,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for description in SENSOR_TYPES:
             entities.append(InverterModuleSensor(coordinator, i, description))
 
-    # Add combined sensors manually
-    entities.append(
-        InverterCombinedSensor(coordinator, "power", "Total Power", UnitOfPower.WATT)
-    )
-    entities.append(
-        InverterCombinedSensor(
-            coordinator, "energy", "Total Energy", UnitOfEnergy.KILO_WATT_HOUR
-        )
-    )
+    for description in SENSOR_TYPES_SINGLE:
+        entities.append(InverterModuleSensor(coordinator, 0, description))
 
     async_add_entities(entities)
