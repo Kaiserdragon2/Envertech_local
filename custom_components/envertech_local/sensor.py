@@ -213,7 +213,6 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.sn = sn
 
         self.data = {}
-        self.device_id = "unknown"  # default until parsed
         self.module_ids = {}
         self.sock = None
         self.running = True
@@ -254,10 +253,6 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         if self.sock:
             self.sock.close()
 
-    @property
-    def unique_device_id(self):
-        return getattr(self, "device_id", "unknown")
-
 
 class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     def __init__(
@@ -268,7 +263,7 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
         self._module_index = module_index
         self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
         self._attr_unique_id = (
-            f"EVT_{self.coordinator.unique_device_id}_P{module_index}_{description.key}"
+            f"EVT_{self.coordinator.sn}_P{module_index}_{description.key}"
         )
         self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_state_class = description.state_class
@@ -291,7 +286,7 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={
-                (DOMAIN, f"EVT_{self.coordinator.unique_device_id}")
+                (DOMAIN, f"EVT_{self.coordinator.sn}")
             },  # unique device id
             name="EVT",
             manufacturer="Envertech",
@@ -306,7 +301,7 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._key = key
         self._attr_name = name
-        self._attr_unique_id = f"EVT_{self.coordinator.unique_device_id}_combined_{key}"
+        self._attr_unique_id = f"EVT_{self.coordinator.sn}_combined_{key}"
         self._attr_native_unit_of_measurement = unit
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -324,9 +319,9 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, f"EVT_{self.coordinator.unique_device_id}")},
+            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},
             name="EVT",
-            manufacturer="Envertec",
+            manufacturer="Envertech",
         )
 
     @property
@@ -335,7 +330,7 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
 
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
-    coordinator = hass.data["envertech_local"][entry.entry_id]
+    coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = []
 
