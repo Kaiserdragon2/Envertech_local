@@ -205,53 +205,49 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.ip = ip
         self.port = port
         self.sn = sn
-
         self.data = {}
         self.module_ids = {}
-        self.sock = None
+        self.reader = None
+        self.writer = None
         self.running = True
         self.number_of_panels = 0
-        self.data_ready = False  # Add a flag to track data readiness
+        self.data_ready = False
+        # Start the async reader loop
+        asyncio.create_task(self.reader_loop())
 
     async def reader_loop(self):
-        while self.running:
-            try:
-                reader, writer = await asyncio.open_connection(self.ip, self.port)
-                _LOGGER.info("Connected to inverter.")
+        try:
+            # Create an async connection
+            reader, writer = await asyncio.open_connection(self.ip, self.port)
+            self.reader = reader
+            self.writer = writer
+            _LOGGER.info("Connected to inverter.")
 
-                while self.running:
-                    raw = await asyncio.wait_for(reader.read(1024), timeout=300)
-
+            while self.running:
+                try:
+                    # Non-blocking read, wait for 5 seconds before checking again
+                    raw = await asyncio.wait_for(reader.read(1024), timeout=5)
                     if not raw:
                         _LOGGER.warning("Socket closed by inverter.")
                         break
 
-                    # Check length and headers
+                    # Process data (assuming it's valid)
                     if len(raw) < 16:
-                        _LOGGER.warning(
-                            "Received incomplete packet: length=%d, expected=%d",
-                            len(raw),
-                            16,
-                        )
+                        _LOGGER.warning("Received incomplete packet: length=%d, expected=%d", len(raw), 16)
                         continue
-
-                    # Check headers
+                    
                     if raw[0] != 0x68 or raw[3] != 0x68:
                         _LOGGER.warning("Invalid packet header")
                         continue
 
                     expected_length = int.from_bytes(raw[1:3], "big")
                     if len(raw) != expected_length:
-                        _LOGGER.warning(
-                            "Length mismatch: expected %d bytes from length field, got %d",
-                            expected_length,
-                            len(raw),
-                        )
+                        _LOGGER.warning("Length mismatch: expected %d bytes from length field, got %d", expected_length, len(raw))
                         continue
+
                     if len(raw) == 32:
-                        writer.write(start_send_data(self.sn))
-                        await writer.drain()
-                        raw = await asyncio.wait_for(reader.read(1024), timeout=300)
+                        await self.send_data()  # Send data if necessary
+                        raw = await reader.read(1024)
 
                     control_code = int.from_bytes(raw[4:6], "big")
                     if control_code == 4177:
@@ -293,14 +289,29 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         self.hass.loop.call_soon_threadsafe(
                             self.async_set_updated_data, self.data
                         )
-            except Exception as e:
-                _LOGGER.error(f"Inverter socket error: {e}")
-                await asyncio.sleep(5)
+
+                except TimeoutError:
+                    _LOGGER.warning("Inverter socket timeout, trying again.")
+                except Exception as e:
+                    _LOGGER.error(f"Inverter socket error: {e}")
+                    await asyncio.sleep(5)  # Retry after 5 seconds if any exception occurs
+
+        except Exception as e:
+            _LOGGER.error(f"Failed to establish connection: {e}")
+
+    async def send_data(self):
+        """Send data to the inverter (non-blocking)."""
+        data = start_send_data(self.sn)
+        self.writer.write(data)
+        await self.writer.drain()  # Ensure the data is sent
+        _LOGGER.debug(f"Sent data to inverter: {data.hex()}")
 
     async def async_close(self):
+        """Close the connection."""
         self.running = False
-        if self.sock:
-            self.sock.close()
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
 
 
 class InverterSensor(CoordinatorEntity, SensorEntity):
