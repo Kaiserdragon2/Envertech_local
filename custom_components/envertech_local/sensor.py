@@ -284,7 +284,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         for key in ["power", "energy"]:
                             total = 0.0
                             valid = False
-                            for i in range(self.coordinator.number_of_panels):
+                            for i in range(self.number_of_panels):
                                 val = self.coordinator.data.get(f"{i}_{self._key}")
                                 if isinstance(val, (int, float)):
                                     total += val
