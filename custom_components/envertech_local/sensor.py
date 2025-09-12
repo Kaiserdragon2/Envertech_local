@@ -35,6 +35,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.VOLTAGE,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="power",
@@ -42,6 +43,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.POWER,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="energy",
@@ -49,6 +51,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         state_class=SensorStateClass.TOTAL_INCREASING,
         device_class=SensorDeviceClass.ENERGY,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="temperature",
@@ -56,6 +59,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.TEMPERATURE,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="grid_voltage",
@@ -63,6 +67,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfElectricPotential.VOLT,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.VOLTAGE,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="frequency",
@@ -70,6 +75,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfFrequency.HERTZ,
         state_class=SensorStateClass.MEASUREMENT,
         device_class=SensorDeviceClass.FREQUENCY,
+        suggested_display_precision=2,
     ),
     SensorEntityDescription(
         key="mi_sn",
@@ -312,7 +318,7 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         total = 0.0
         valid = False
-        for i in range(4):
+        for i in range(16):
             val = self.coordinator.data.get(f"{i}_{self._key}")
             if isinstance(val, (int, float)):
                 total += val
