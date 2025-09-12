@@ -342,7 +342,12 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
     coordinator = hass.data[DOMAIN][entry.entry_id]
+    await coordinator.async_refresh()
 
+    if coordinator.number_of_panels == 0:
+        _LOGGER.error("No panels detected.")
+        return
+    
     entities = []
 
     for i in range(coordinator.number_of_panels):
