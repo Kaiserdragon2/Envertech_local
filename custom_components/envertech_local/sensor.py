@@ -328,7 +328,7 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_unit_of_measurement = unit
         self._attr_state_class = (SensorStateClass.MEASUREMENT
             if key == "power"
-            else SensorDeviceClass.TOTAL_INCREASING
+            else SensorStateClass.TOTAL_INCREASING
             if key == "energy"
             else None
         )
