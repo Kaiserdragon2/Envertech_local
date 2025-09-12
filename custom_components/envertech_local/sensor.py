@@ -222,28 +222,49 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         while self.running:
             try:
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.settimeout(100)
+                self.sock.settimeout(300)
                 self.sock.connect((self.ip, self.port))
                 _LOGGER.info("Connected to inverter.")
                 while self.running:
                     raw = self.sock.recv(1024)
+
+                    if not raw:
+                        _LOGGER.warning("Socket closed by inverter.")
+                        break
+                                    # Check length and headers
+                    if len(raw) < 16:
+                        _LOGGER.warning("Received incomplete packet: length=%d, expected=%d", len(raw), 16)
+                        continue
+                    # Check headers
+                    if raw[0] != 0x68 or raw[3] != 0x68:
+                        _LOGGER.warning("Invalid packet header")
+                        continue
+
+                    expected_length = int.from_bytes(data[1:3], "big")
+                    if len(raw) != expected_length:
+                        _LOGGER.warning(
+                            "Length mismatch: expected %d bytes from length field, got %d",
+                            expected_length, len(raw)
+                        )
+                        continue
                     if len(raw) == 32:
                         self.sock.sendall(start_send_data(self.sn))
                         raw = self.sock.recv(1024)
-                    data = list(raw)
-                    device_id = "".join(f"{b:02x}" for b in data[6:10])
-                    for i, offset in enumerate(OFFSET_TABLE):
-                        parsed = parse_module_data(data, offset)
-                        if parsed:
-                            for key, val in parsed.items():
-                                if isinstance(val, (int, float)):
-                                    self.data[f"{i}_{key}"] = round(val, 2)
-                                else:
-                                    self.data[f"{i}_{key}"] = val
-                    self.hass.loop.call_soon_threadsafe(
-                        self.async_set_updated_data, self.data
-                    )
-
+                    control_code = int.from_bytes(data[4:6], "big")
+                    if control_code == 4177:
+                        data = list(raw)
+                        device_id = "".join(f"{b:02x}" for b in data[6:10])
+                        for i, offset in enumerate(OFFSET_TABLE):
+                            parsed = parse_module_data(data, offset)
+                            if parsed:
+                                for key, val in parsed.items():
+                                    if isinstance(val, (int, float)):
+                                        self.data[f"{i}_{key}"] = round(val, 2)
+                                    else:
+                                        self.data[f"{i}_{key}"] = val
+                        self.hass.loop.call_soon_threadsafe(
+                            self.async_set_updated_data, self.data
+                        )
             except Exception as e:
                 _LOGGER.error(f"Inverter socket error: {e}")
                 time.sleep(5)
