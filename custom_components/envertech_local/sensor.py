@@ -138,7 +138,7 @@ def start_send_data(current_id_hex: str) -> bytes:
     data = bytearray()
 
     # Fixed header
-    data += bytes([0x68, 0x00, 0x20, 0x68, 0x10, 0x46])
+    data += bytes([0x68, 0x00, 0x20, 0x68, 0x10, 0x77])
 
     # Add currentID bytes
     try:
