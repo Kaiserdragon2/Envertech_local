@@ -226,6 +226,15 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
 
             while self.running:
                 try:
+
+                    # Attempt to create a new connection if not already connected
+                    if self.reader is None or self.writer is None:
+                        _LOGGER.info("Establishing connection to inverter...")
+                        reader, writer = await asyncio.open_connection(self.ip, self.port)
+                        self.reader = reader
+                        self.writer = writer
+                        _LOGGER.info("Connected to inverter.")
+
                     # Non-blocking read, wait for 5 seconds before checking again
                     raw = await asyncio.wait_for(reader.read(1024), timeout=300)
                     if not raw:
@@ -287,21 +296,38 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                             self.async_set_updated_data, self.data
                         )
 
-                except TimeoutError:
-                    _LOGGER.warning("Inverter socket timeout, trying again.")
+                except (asyncio.TimeoutError, ConnectionResetError) as e:
+                    _LOGGER.warning(f"Connection issue: {e}. Retrying...")
+                    await asyncio.sleep(15)  # Delay before retrying the connection.
+                    self.reader = None
+                    self.writer = None  # Force reconnection
                 except Exception as e:
                     _LOGGER.error(f"Inverter socket error: {e}")
-                    await asyncio.sleep(5)  # Retry after 5 seconds if any exception occurs
+                    await asyncio.sleep(15)  # Retry after 5 seconds if any exception occurs
 
         except Exception as e:
             _LOGGER.error(f"Failed to establish connection: {e}")
 
     async def send_data(self):
         """Send data to the inverter (non-blocking)."""
-        data = start_send_data(self.sn)
-        self.writer.write(data)
-        await self.writer.drain()  # Ensure the data is sent
-        _LOGGER.debug(f"Sent data to inverter: {data.hex()}")
+        try:
+            if self.writer is None:
+                _LOGGER.info("Reconnecting to inverter...")
+                reader, writer = await asyncio.open_connection(self.ip, self.port)
+                self.reader = reader
+                self.writer = writer
+                _LOGGER.info("Reconnected to inverter.")
+            
+            data = start_send_data(self.sn)
+            self.writer.write(data)
+            await self.writer.drain()  # Ensure the data is sent
+            _LOGGER.debug(f"Sent data to inverter: {data.hex()}")
+
+        except (ConnectionResetError, BrokenPipeError) as e:
+            _LOGGER.warning(f"Connection lost: {e}. Retrying...")
+            self.writer = None  # Force reconnect
+        except Exception as e:
+            _LOGGER.error(f"Error sending data: {e}")
 
     async def periodic_send_data(self):
         """Send data to the inverter at a fixed interval."""
@@ -373,9 +399,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]
     
     # Wait for the coordinator's reader_loop to set data_ready to True
-    while not coordinator.data_ready:
+    max_wait = 60  # Wait for up to 60 seconds for data to be ready
+    while not coordinator.data_ready and max_wait > 0:
         _LOGGER.debug("Waiting for inverter data to be ready...")
         await asyncio.sleep(1)  # Sleep for a short time and check again
+        max_wait -= 1
 
     if coordinator.number_of_panels == 0:
         _LOGGER.error("No panels detected.")
