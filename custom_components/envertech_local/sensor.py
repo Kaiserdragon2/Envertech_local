@@ -83,6 +83,11 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         translation_key="module_serial",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+        SensorEntityDescription(
+        key="firmware_version",
+        translation_key="firmware_version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -235,6 +240,8 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                         data = list(raw)
                         device_id = "".join(f"{b:02x}" for b in data[6:10])
                         self.number_of_panels = (len(raw) - 22) // 32
+                        firmware_version = f"{data[11]}.{data[13]:02d}"
+                        self.data["firmware_version"] = firmware_version
                         for i in range(self.number_of_panels):
                             base_offset = 20 + i * 32
                             offset = {

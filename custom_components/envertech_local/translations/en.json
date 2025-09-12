@@ -19,7 +19,8 @@
       "temperature": { "name": "Temperature" },
       "grid_voltage": { "name": "Grid Voltage" },
       "frequency": { "name": "Frequency" },
-      "module_serial": { "name": "Module Serial Number" }
+      "module_serial": { "name": "Module Serial Number" },
+      "firmware_version": { "name": "Firmware Version"}
     }
   }
 }
