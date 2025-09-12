@@ -319,7 +319,20 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = name
         self._attr_unique_id = f"EVT_{self.coordinator.sn}_combined_{key}"
         self._attr_native_unit_of_measurement = unit
-        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_state_class = (SensorStateClass.MEASUREMENT
+            if key == "power"
+            else SensorDeviceClass.TOTAL_INCREASING
+            if key == "energy"
+            else None
+        )
+        self._attr_device_class = (
+            SensorDeviceClass.POWER
+            if key == "power"
+            else SensorDeviceClass.ENERGY
+            if key == "energy"
+            else None
+        )
+        self._attr_suggested_display_precision = 2
 
     @property
     def native_value(self):
