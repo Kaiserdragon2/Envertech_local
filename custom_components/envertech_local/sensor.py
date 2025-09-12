@@ -19,7 +19,7 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfElectricPotential,
     UnitOfFrequency,
-    EntityCategory
+    EntityCategory,
 )
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -80,44 +80,6 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
 
 _LOGGER = logging.getLogger(__name__)
 
-OFFSET_TABLE = [
-    {
-        "mi_sn": 20,
-        "input_voltage": 26,
-        "power": 28,
-        "energy": 30,
-        "temperature": 34,
-        "grid_voltage": 36,
-        "frequency": 38,
-    },
-    {
-        "mi_sn": 52,
-        "input_voltage": 58,
-        "power": 60,
-        "energy": 62,
-        "temperature": 66,
-        "grid_voltage": 68,
-        "frequency": 70,
-    },
-    {
-        "mi_sn": 84,
-        "input_voltage": 90,
-        "power": 92,
-        "energy": 94,
-        "temperature": 98,
-        "grid_voltage": 100,
-        "frequency": 102,
-    },
-    {
-        "mi_sn": 116,
-        "input_voltage": 122,
-        "power": 124,
-        "energy": 126,
-        "temperature": 130,
-        "grid_voltage": 132,
-        "frequency": 134,
-    },
-]
 
 def check_cs(byte_array):
     return (sum(byte_array) + 85) & 0xFF
@@ -128,11 +90,14 @@ def hex_string_to_bytes(hex_str):
     hex_str = hex_str.strip().replace(" ", "")
     return bytes.fromhex(hex_str)
 
+
 def to_int16(byte1, byte2):
     return byte1 * 256 + byte2
 
+
 def to_int32(byte1, byte2, byte3, byte4):
     return (byte1 << 24) + (byte2 << 16) + (byte3 << 8) + byte4
+
 
 def start_send_data(current_id_hex: str) -> bytes:
     data = bytearray()
@@ -159,6 +124,7 @@ def start_send_data(current_id_hex: str) -> bytes:
     data.append(0x16)
 
     return bytes(data)
+
 
 def parse_module_data(data, offset):
     try:
@@ -231,9 +197,13 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if not raw:
                         _LOGGER.warning("Socket closed by inverter.")
                         break
-                                    # Check length and headers
+                        # Check length and headers
                     if len(raw) < 16:
-                        _LOGGER.warning("Received incomplete packet: length=%d, expected=%d", len(raw), 16)
+                        _LOGGER.warning(
+                            "Received incomplete packet: length=%d, expected=%d",
+                            len(raw),
+                            16,
+                        )
                         continue
                     # Check headers
                     if raw[0] != 0x68 or raw[3] != 0x68:
@@ -244,7 +214,8 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if len(raw) != expected_length:
                         _LOGGER.warning(
                             "Length mismatch: expected %d bytes from length field, got %d",
-                            expected_length, len(raw)
+                            expected_length,
+                            len(raw),
                         )
                         continue
                     if len(raw) == 32:
@@ -254,7 +225,18 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if control_code == 4177:
                         data = list(raw)
                         device_id = "".join(f"{b:02x}" for b in data[6:10])
-                        for i, offset in enumerate(OFFSET_TABLE):
+                        number_of_panels = (len(raw) - 22) // 32
+                        for i in range(number_of_panels):
+                            base_offset = 20 + i * 32
+                            offset = {
+                                "mi_sn": base_offset + 0,
+                                "input_voltage": base_offset + 6,
+                                "power": base_offset + 8,
+                                "energy": base_offset + 10,
+                                "temperature": base_offset + 14,
+                                "grid_voltage": base_offset + 16,
+                                "frequency": base_offset + 18,
+                            }
                             parsed = parse_module_data(data, offset)
                             if parsed:
                                 for key, val in parsed.items():
@@ -262,6 +244,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                                         self.data[f"{i}_{key}"] = round(val, 2)
                                     else:
                                         self.data[f"{i}_{key}"] = val
+
                         self.hass.loop.call_soon_threadsafe(
                             self.async_set_updated_data, self.data
                         )
@@ -306,9 +289,7 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={
-                (DOMAIN, f"EVT_{self.coordinator.sn}")
-            },  # unique device id
+            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},  # unique device id
             name="EVT",
             manufacturer="Envertech",
         )
@@ -316,6 +297,7 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success
+
 
 class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, key, name, unit):
@@ -349,13 +331,14 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         return self.coordinator.last_update_success
 
+
 async def async_setup_entry(hass, entry, async_add_entities):
     # Get the coordinator from hass.data where it was stored in __init__.py
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities = []
 
-    for i in range(4):
+    for i in range(16):
         for description in SENSOR_TYPES:
             entities.append(InverterModuleSensor(coordinator, i, description))
 
