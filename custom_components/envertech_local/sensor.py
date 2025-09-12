@@ -188,6 +188,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.module_ids = {}
         self.sock = None
         self.running = True
+        self.number_of_panels = 0
         threading.Thread(target=self.reader_loop, daemon=True).start()
 
     def reader_loop(self):
@@ -231,8 +232,8 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if control_code == 4177:
                         data = list(raw)
                         device_id = "".join(f"{b:02x}" for b in data[6:10])
-                        number_of_panels = (len(raw) - 22) // 32
-                        for i in range(number_of_panels):
+                        self.number_of_panels = (len(raw) - 22) // 32
+                        for i in range(self.number_of_panels):
                             base_offset = 20 + i * 32
                             offset = {
                                 "mi_sn": base_offset + 0,
@@ -318,7 +319,7 @@ class InverterCombinedSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         total = 0.0
         valid = False
-        for i in range(16):
+        for i in range(self.coordinator.number_of_panels):
             val = self.coordinator.data.get(f"{i}_{self._key}")
             if isinstance(val, (int, float)):
                 total += val
@@ -344,7 +345,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     entities = []
 
-    for i in range(16):
+    for i in range(coordinator.number_of_panels):
         for description in SENSOR_TYPES:
             entities.append(InverterModuleSensor(coordinator, i, description))
 
