@@ -6,7 +6,7 @@ import time
 import asyncio
 from datetime import timedelta
 
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER, DEVICE_NAME
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -285,7 +285,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                             total = 0.0
                             valid = False
                             for i in range(self.number_of_panels):
-                                val = self.coordinator.data.get(f"{i}_{self._key}")
+                                val = self.data.get(f"{i}_{key}")
                                 if isinstance(val, (int, float)):
                                     total += val
                                     valid = True
@@ -307,17 +307,22 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
             self.sock.close()
 
 
-class InverterModuleSensor(CoordinatorEntity, SensorEntity):
+class InverterSensor(CoordinatorEntity, SensorEntity):
     def __init__(
-        self, coordinator, module_index: int, description: SensorEntityDescription
+        self, coordinator, description: SensorEntityDescription, module_index: int = None
     ):
         super().__init__(coordinator)
         self.entity_description = description
         self._module_index = module_index
-        self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
-        self._attr_unique_id = (
-            f"EVT_{self.coordinator.sn}_P{module_index}_{description.key}"
-        )
+
+        # If module_index is provided, it's a module sensor, otherwise it's a single sensor
+        if module_index is not None:
+            self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
+            self._attr_unique_id = f"{DEVICE_NAME}_{self.coordinator.sn}_P{module_index}_{description.key}"
+        else:
+            self._attr_name = description.translation_key.replace('_', ' ').title()
+            self._attr_unique_id = f"{DEVICE_NAME}_{self.coordinator.sn}_{description.key}"
+
         self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_state_class = description.state_class
         self._attr_device_class = description.device_class
@@ -325,59 +330,30 @@ class InverterModuleSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator.data.get(
-            f"{self._module_index}_{self.entity_description.key}"
-        )
+        if self._module_index is not None:
+            # Module-specific data retrieval
+            return self.coordinator.data.get(f"{self._module_index}_{self.entity_description.key}")
+        else:
+            # Single sensor data retrieval
+            return self.coordinator.data.get(self.entity_description.key)
 
     @property
     def extra_state_attributes(self):
-        return {
-            "serial_number": self.coordinator.data.get(f"{self._module_index}_mi_sn")
-        }
+        if self._module_index is not None:
+            return {
+                "serial_number": self.coordinator.data.get(f"{self._module_index}_mi_sn")
+            }
+        else:
+            return {}
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},  # unique device id
-            name="EVT",
-            manufacturer="Envertech",
+            identifiers={(DOMAIN, f"{DEVICE_NAME}_{self.coordinator.sn}")},  # unique device id
+            name=f"{DEVICE_NAME} {self.coordinator.sn}",
+            manufacturer=MANUFACTURER,
         )
 
-    @property
-    def available(self) -> bool:
-        return self.coordinator.last_update_success
-
-class InverterModuleSensorSingle(CoordinatorEntity, SensorEntity):
-    def __init__(
-        self, coordinator, module_index: int, description: SensorEntityDescription
-    ):
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._module_index = module_index
-        self._attr_name = f"P{module_index + 1} {description.translation_key.replace('_', ' ').title()}"
-        self._attr_unique_id = (f"EVT_{self.coordinator.sn}_{description.key}")
-        self._attr_native_unit_of_measurement = description.native_unit_of_measurement
-        self._attr_state_class = description.state_class
-        self._attr_device_class = description.device_class
-        self._attr_entity_category = description.entity_category
-
-    @property
-    def native_value(self):
-        return self.coordinator.data.get(
-            f"{self._module_index}_{self.entity_description.key}"
-        )
-    @property
-    def extra_state_attributes(self):
-        return {
-            "serial_number": self.coordinator.data.get(f"{self._module_index}_mi_sn")
-        }
-    @property
-    def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, f"EVT_{self.coordinator.sn}")},  # unique device id
-            name="EVT",
-            manufacturer="Envertech",
-        )
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success
@@ -398,9 +374,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     for i in range(coordinator.number_of_panels):
         for description in SENSOR_TYPES:
-            entities.append(InverterModuleSensor(coordinator, i, description))
+            entities.append(InverterSensor(coordinator, description, module_index=i))
 
     for description in SENSOR_TYPES_SINGLE:
-        entities.append(InverterModuleSensor(coordinator, 0, description))
+        entities.append(InverterSensor(coordinator, description))
 
     async_add_entities(entities)

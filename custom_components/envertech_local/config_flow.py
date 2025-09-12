@@ -6,7 +6,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_PORT, CONF_UNIQUE_ID
 
-from .const import DOMAIN
+from .const import DOMAIN, DEVICE_NAME
 
 # Set up logging for debugging
 logging.basicConfig(level=logging.DEBUG)
@@ -92,7 +92,7 @@ class InverterMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             sn = ip_to_sn.get(selected_ip, "unknown")
 
             return self.async_create_entry(
-                title=f"Inverter {selected_ip}",
+                title=f"{DEVICE_NAME} {sn}",
                 data={
                     CONF_IP_ADDRESS: selected_ip,
                     CONF_UNIQUE_ID: sn,
@@ -123,7 +123,7 @@ class InverterMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle manual entry of device details."""
         if user_input is not None:
             return self.async_create_entry(
-                title=f"Inverter {user_input[CONF_IP_ADDRESS]}",
+                title=f"{DEVICE_NAME} {user_input[CONF_UNIQUE_ID]}",
                 data={
                     CONF_IP_ADDRESS: user_input[CONF_IP_ADDRESS],
                     CONF_UNIQUE_ID: user_input[CONF_UNIQUE_ID],
