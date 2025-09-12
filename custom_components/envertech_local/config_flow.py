@@ -1,7 +1,5 @@
 import socket
-import struct
 import logging
-import psutil  # For fetching network interface info
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_IP_ADDRESS, CONF_PORT, CONF_UNIQUE_ID
@@ -20,7 +18,7 @@ broadcast_ip = '255.255.255.255'
 broadcast_ports = [48889, 48899]  # Ports for the broadcast (48899 Wifi)
 
 # Function to discover devices with a timeout
-def discover_devices(timeout=2):
+def discover_devices(timeout=5):
     discovered_devices = []
 
     # Create a new socket each time discovery is attempted
@@ -80,6 +78,28 @@ class InverterMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         self.discovered_devices = await self.hass.async_add_executor_job(discover_devices)
+
+        # Get the list of existing devices in Home Assistant
+        existing_entries = self.hass.config_entries.async_entries(DOMAIN)
+        existing_ips = {entry.data[CONF_IP_ADDRESS] for entry in existing_entries}
+        existing_ids = {entry.data[CONF_UNIQUE_ID] for entry in existing_entries}
+
+        # Filter out already existing devices from the discovered list
+        filtered_devices = [
+            device for device in self.discovered_devices
+            if device['ip'] not in existing_ips and device['serial_number'] not in existing_ids
+        ]
+
+        if not filtered_devices:
+            # No new devices found, exit early or inform the user
+            return self.async_show_form(
+                step_id="user",
+                errors={"base": "no_new_devices"},
+                description_placeholders={
+                    "discovered_devices": "No new devices found."
+                }
+            )
+        # Create a mapping of IP to serial number
         ip_to_sn = {d["ip"]: d["serial_number"] for d in self.discovered_devices}
 
         # Show second step if manual was selected

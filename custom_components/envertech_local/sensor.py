@@ -1,8 +1,5 @@
-import socket
-import binascii
 import logging
 import asyncio
-from datetime import timedelta
 
 from .const import DOMAIN, MANUFACTURER, DEVICE_NAME
 
