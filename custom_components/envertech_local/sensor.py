@@ -209,8 +209,12 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.running = True
         self.number_of_panels = 0
         self.data_ready = False
+        self.send_interval = 15  # Interval to send data (in seconds)
         # Start the async reader loop
         asyncio.create_task(self.reader_loop())
+        
+        # Start the periodic send task
+        asyncio.create_task(self.periodic_send_data())
 
     async def reader_loop(self):
         try:
@@ -223,7 +227,7 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
             while self.running:
                 try:
                     # Non-blocking read, wait for 5 seconds before checking again
-                    raw = await asyncio.wait_for(reader.read(1024), timeout=5)
+                    raw = await asyncio.wait_for(reader.read(1024), timeout=300)
                     if not raw:
                         _LOGGER.warning("Socket closed by inverter.")
                         break
@@ -241,10 +245,6 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                     if len(raw) != expected_length:
                         _LOGGER.warning("Length mismatch: expected %d bytes from length field, got %d", expected_length, len(raw))
                         continue
-
-                    if len(raw) == 32:
-                        await self.send_data()  # Send data if necessary
-                        raw = await reader.read(1024)
 
                     control_code = int.from_bytes(raw[4:6], "big")
                     if control_code == 4177:
@@ -302,6 +302,12 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.writer.write(data)
         await self.writer.drain()  # Ensure the data is sent
         _LOGGER.debug(f"Sent data to inverter: {data.hex()}")
+
+    async def periodic_send_data(self):
+        """Send data to the inverter at a fixed interval."""
+        while self.running:
+            await asyncio.sleep(self.send_interval)  # Wait for the fixed interval
+            await self.send_data()  # Send data
 
     async def async_close(self):
         """Close the connection."""
