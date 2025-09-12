@@ -81,26 +81,16 @@ class InverterMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Get the list of existing devices in Home Assistant
         existing_entries = self.hass.config_entries.async_entries(DOMAIN)
-        existing_ips = {entry.data[CONF_IP_ADDRESS] for entry in existing_entries}
         existing_ids = {entry.data[CONF_UNIQUE_ID] for entry in existing_entries}
 
         # Filter out already existing devices from the discovered list
         filtered_devices = [
             device for device in self.discovered_devices
-            if device['ip'] not in existing_ips and device['serial_number'] not in existing_ids
+            if device['serial_number'] not in existing_ids
         ]
 
-        if not filtered_devices:
-            # No new devices found, exit early or inform the user
-            return self.async_show_form(
-                step_id="user",
-                errors={"base": "no_new_devices"},
-                description_placeholders={
-                    "discovered_devices": "No new devices found."
-                }
-            )
         # Create a mapping of IP to serial number
-        ip_to_sn = {d["ip"]: d["serial_number"] for d in self.discovered_devices}
+        ip_to_sn = {d["ip"]: d["serial_number"] for d in filtered_devices}
 
         # Show second step if manual was selected
         if user_input is not None:
@@ -122,7 +112,7 @@ class InverterMonitorConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Device dropdown + "Manual" option
         device_choices = {
-            d["ip"]: f"{d['ip']} - {d['serial_number']}" for d in self.discovered_devices
+            d["ip"]: f"{d['ip']} - {d['serial_number']}" for d in filtered_devices
         }
         device_choices["manual"] = "Manual entry"
 
