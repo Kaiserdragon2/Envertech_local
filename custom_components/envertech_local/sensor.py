@@ -47,7 +47,7 @@ SENSOR_TYPES: tuple[SensorEntityDescription, ...] = (
         key="energy",
         translation_key="energy",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         device_class=SensorDeviceClass.ENERGY,
     ),
     SensorEntityDescription(
