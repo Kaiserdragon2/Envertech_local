@@ -106,241 +106,75 @@ SENSOR_TYPES_SINGLE: tuple[SensorEntityDescription, ...] = (
 
 _LOGGER = logging.getLogger(__name__)
 
-def check_cs(byte_array):
-    return (sum(byte_array) + 85) & 0xFF
-
-
-def hex_string_to_bytes(hex_str):
-    """Convert hex string to byte array."""
-    hex_str = hex_str.strip().replace(" ", "")
-    return bytes.fromhex(hex_str)
-
-
-def to_int16(byte1, byte2):
-    return byte1 * 256 + byte2
-
-
-def to_int32(byte1, byte2, byte3, byte4):
-    return (byte1 << 24) + (byte2 << 16) + (byte3 << 8) + byte4
-
-
-def start_send_data(current_id_hex: str) -> bytes:
-    data = bytearray()
-
-    # Fixed header
-    data += bytes([0x68, 0x00, 0x20, 0x68, 0x10, 0x77])
-
-    # Add currentID bytes
-    try:
-        current_id_bytes = hex_string_to_bytes(current_id_hex)
-        data += current_id_bytes
-    except ValueError as e:
-        print(f"Invalid hex string for currentID: {e}")
-        return b""
-
-    # Pad with 20 zero bytes
-    data += bytes([0x00] * 20)
-
-    # Compute and add checksum
-    checksum = check_cs(data)
-    data.append(checksum)
-
-    # End byte
-    data.append(0x16)
-
-    return bytes(data)
-
-
-def parse_module_data(data, offset):
-    try:
-        return {
-            "mi_sn": "".join(f'{data[offset["mi_sn"]+i]:02x}' for i in range(4)),
-            "input_voltage": to_int16(
-                data[offset["input_voltage"]], data[offset["input_voltage"] + 1]
-            )
-            * 64
-            / 32768,
-            "power": to_int16(data[offset["power"]], data[offset["power"] + 1])
-            * 512
-            / 32768,
-            "energy": to_int32(
-                data[offset["energy"]],
-                data[offset["energy"] + 1],
-                data[offset["energy"] + 2],
-                data[offset["energy"] + 3],
-            )
-            * 4
-            / 32768,
-            "temperature": to_int16(
-                data[offset["temperature"]], data[offset["temperature"] + 1]
-            )
-            * 256
-            / 32768
-            - 40,
-            "grid_voltage": to_int16(
-                data[offset["grid_voltage"]], data[offset["grid_voltage"] + 1]
-            )
-            * 512
-            / 32768,
-            "frequency": to_int16(
-                data[offset["frequency"]], data[offset["frequency"] + 1]
-            )
-            * 128
-            / 32768,
-        }
-    except IndexError:
-        return None
-
-
 class InverterSocketCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, ip: str, port: int, sn: str):
+    """Coordinator using envertech_local.stream_inverter_data()."""
+
+    def __init__(self, hass, ip: str, port: int, sn: str):
         super().__init__(
             hass,
             _LOGGER,
-            name="inverter_socket",
+            name="inverter_stream",
         )
         self.ip = ip
         self.port = port
         self.sn = sn
+
         self.data = {}
-        self.module_ids = {}
-        self.reader = None
-        self.writer = None
-        self.running = True
         self.number_of_panels = 0
         self.data_ready = False
-        self.send_interval = 15  # Interval to send data (in seconds)
-        # Start the async reader loop
-        asyncio.create_task(self.reader_loop())
-        
-        # Start the periodic send task
-        asyncio.create_task(self.periodic_send_data())
+        self.connected = False
+        self.running = True
 
-    async def reader_loop(self):
-        try:
-            # Create an async connection
-            reader, writer = await asyncio.open_connection(self.ip, self.port)
-            self.reader = reader
-            self.writer = writer
-            _LOGGER.info("Connected to inverter.")
+        # Start streaming
+        asyncio.create_task(self._stream_loop())
 
-            while self.running:
-                try:
+    async def _stream_loop(self):
+        """Consume inverter data from stream_inverter_data()."""
 
-                    # Attempt to create a new connection if not already connected
-                    if self.reader is None or self.writer is None:
-                        _LOGGER.info("Establishing connection to inverter...")
-                        reader, writer = await asyncio.open_connection(self.ip, self.port)
-                        self.reader = reader
-                        self.writer = writer
-                        _LOGGER.info("Connected to inverter.")
+        from envertech_local import stream_inverter_data
 
-                    # Non-blocking read, wait for 5 seconds before checking again
-                    raw = await asyncio.wait_for(reader.read(1024), timeout=300)
-                    if not raw:
-                        _LOGGER.warning("Socket closed by inverter.")
-                        break
+        device = {
+            "ip": self.ip,
+            "port": self.port,
+            "serial_number": self.sn,
+        }
 
-                    # Process data (assuming it's valid)
-                    if len(raw) < 16:
-                        _LOGGER.warning("Received incomplete packet: length=%d, expected=%d", len(raw), 16)
-                        continue
-                    
-                    if raw[0] != 0x68 or raw[3] != 0x68:
-                        _LOGGER.warning("Invalid packet header")
-                        continue
-
-                    expected_length = int.from_bytes(raw[1:3], "big")
-                    if len(raw) != expected_length:
-                        _LOGGER.warning("Length mismatch: expected %d bytes from length field, got %d", expected_length, len(raw))
-                        continue
-
-                    control_code = int.from_bytes(raw[4:6], "big")
-                    if control_code == 4177:
-                        data = list(raw)
-                        self.number_of_panels = (len(raw) - 22) // 32
-                        self.data["firmware_version"] = f"{data[10]}/{data[12]}"
-                        for i in range(self.number_of_panels):
-                            base_offset = 20 + i * 32
-                            offset = {
-                                "mi_sn": base_offset + 0,
-                                "input_voltage": base_offset + 6,
-                                "power": base_offset + 8,
-                                "energy": base_offset + 10,
-                                "temperature": base_offset + 14,
-                                "grid_voltage": base_offset + 16,
-                                "frequency": base_offset + 18,
-                            }
-                            parsed = parse_module_data(data, offset)
-                            if parsed:
-                                for key, val in parsed.items():
-                                    if isinstance(val, (int, float)):
-                                        self.data[f"{i}_{key}"] = round(val, 2)
-                                    else:
-                                        self.data[f"{i}_{key}"] = val
-
-                        # Update combined sensors
-                        for key in ["power", "energy"]:
-                            total = 0.0
-                            valid = False
-                            for i in range(self.number_of_panels):
-                                val = self.data.get(f"{i}_{key}")
-                                if isinstance(val, (int, float)):
-                                    total += val
-                                    valid = True
-                            self.data[f"total_{key}"] = round(total, 2) if valid else None
-
-                        # Set the data_ready flag once we have the data
-                        self.data_ready = True
-                        self.hass.loop.call_soon_threadsafe(
-                            self.async_set_updated_data, self.data
-                        )
-
-                except (asyncio.TimeoutError, ConnectionResetError) as e:
-                    _LOGGER.warning(f"Connection issue: {e}. Retrying...")
-                    await asyncio.sleep(15)  # Delay before retrying the connection.
-                    self.reader = None
-                    self.writer = None  # Force reconnection
-                except Exception as e:
-                    _LOGGER.error(f"Inverter socket error: {e}")
-                    await asyncio.sleep(15)  # Retry after 5 seconds if any exception occurs
-
-        except Exception as e:
-            _LOGGER.error(f"Failed to establish connection: {e}")
-
-    async def send_data(self):
-        """Send data to the inverter (non-blocking)."""
-        try:
-            if self.writer is None:
-                _LOGGER.info("Reconnecting to inverter...")
-                reader, writer = await asyncio.open_connection(self.ip, self.port)
-                self.reader = reader
-                self.writer = writer
-                _LOGGER.info("Reconnected to inverter.")
-            
-            data = start_send_data(self.sn)
-            self.writer.write(data)
-            await self.writer.drain()  # Ensure the data is sent
-            _LOGGER.debug(f"Sent data to inverter: {data.hex()}")
-
-        except (ConnectionResetError, BrokenPipeError) as e:
-            _LOGGER.warning(f"Connection lost: {e}. Retrying...")
-            self.writer = None  # Force reconnect
-        except Exception as e:
-            _LOGGER.error(f"Error sending data: {e}")
-
-    async def periodic_send_data(self):
-        """Send data to the inverter at a fixed interval."""
         while self.running:
-            await asyncio.sleep(self.send_interval)  # Wait for the fixed interval
-            await self.send_data()  # Send data
+            try:
+                async for update in stream_inverter_data(device, interval=5):
 
-    async def async_close(self):
-        """Close the connection."""
-        self.running = False
-        if self.writer:
-            self.writer.close()
-            await self.writer.wait_closed()
+                    if isinstance(update, dict) and "error" in update:
+                        _LOGGER.error(f"Inverter error: {update['error']}")
+                        self.connected = False
+                        continue
+
+                    parsed_data = update
+
+                    # Count panels
+                    panel_ids = [
+                        key.split("_")[0]
+                        for key in parsed_data.keys()
+                        if "_" in key and key[0].isdigit()
+                    ]
+                    self.number_of_panels = len(set(panel_ids))
+
+                    # Store all values
+                    for key, val in parsed_data.items():
+                        if isinstance(val, (int, float)):
+                            self.data[key] = round(val, 2)
+                        else:
+                            self.data[key] = val
+
+                    self.connected = True
+                    self.data_ready = True
+                    
+                    # Notify HA
+                    self.async_set_updated_data(self.data)
+
+            except Exception as e:
+                self.connected = False
+                _LOGGER.error(f"Stream disconnected: {e}")
+                await asyncio.sleep(10)
 
 
 class InverterSensor(CoordinatorEntity, SensorEntity):
@@ -392,29 +226,30 @@ class InverterSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.coordinator.last_update_success
+        # Check the connection status
+        return self.coordinator.connected and self.coordinator.last_update_success
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    # Get the coordinator from hass.data where it was stored in __init__.py
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    
-    # Wait for the coordinator's reader_loop to set data_ready to True
-    max_wait = 60  # Wait for up to 60 seconds for data to be ready
-    while not coordinator.data_ready and max_wait > 0:
-        _LOGGER.debug("Waiting for inverter data to be ready...")
-        await asyncio.sleep(1)  # Sleep for a short time and check again
-        max_wait -= 1
 
-    if coordinator.number_of_panels == 0:
-        _LOGGER.error("No panels detected.")
+    # Wait for initial data
+    for _ in range(60):
+        if coordinator.data_ready:
+            break
+        await asyncio.sleep(1)
+
+    if not coordinator.data_ready:
+        _LOGGER.error("Failed to load inverter data within 60 seconds")
         return
-    
+
     entities = []
 
+    # Add per-panel sensors
     for i in range(coordinator.number_of_panels):
         for description in SENSOR_TYPES:
             entities.append(InverterSensor(coordinator, description, module_index=i))
 
+    # Add single (global) sensors
     for description in SENSOR_TYPES_SINGLE:
         entities.append(InverterSensor(coordinator, description))
 

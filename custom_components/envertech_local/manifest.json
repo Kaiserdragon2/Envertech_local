@@ -8,6 +8,6 @@
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Kaiserdragon2/Envertech_local/issues",
-  "requirements": [],
+  "requirements": ["envertech-local==0.0.2"],
   "version": "1.0.0"
 }
