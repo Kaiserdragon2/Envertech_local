@@ -144,7 +144,6 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
                 async for update in stream_inverter_data(device, interval=5):
 
                     if isinstance(update, dict) and "error" in update:
-                        _LOGGER.error(f"Inverter error: {update['error']}")
                         self.connected = False
                         continue
 
@@ -167,13 +166,12 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
 
                     self.connected = True
                     self.data_ready = True
-                    
+
                     # Notify HA
                     self.async_set_updated_data(self.data)
 
             except Exception as e:
                 self.connected = False
-                _LOGGER.error(f"Stream disconnected: {e}")
                 await asyncio.sleep(10)
 
 
