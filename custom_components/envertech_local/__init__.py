@@ -23,7 +23,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sn = entry.data[CONF_UNIQUE_ID]
     port = entry.data[CONF_PORT]
 
-    coordinator = InverterSocketCoordinator(hass, ip, port, sn)
+    coordinator = InverterSocketCoordinator(hass, ip, port, sn, entry)
 
     # Store the coordinator reference so sensors and diagnostics can use it
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -32,7 +32,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        await coordinator.async_shutdown()
+
+    return unload_ok
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict:
     coordinator: InverterSocketCoordinator = hass.data[entry.domain][entry.entry_id]

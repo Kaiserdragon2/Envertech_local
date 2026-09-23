@@ -20,6 +20,7 @@ from homeassistant.const import (
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     CoordinatorEntity,
+    UpdateFailed,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -107,12 +108,16 @@ SENSOR_TYPES_SINGLE: tuple[SensorEntityDescription, ...] = (
 _LOGGER = logging.getLogger(__name__)
 
 class InverterSocketCoordinator(DataUpdateCoordinator):
-    """Coordinator using envertech_local.stream_inverter_data()."""
+    """Coordinator polling the inverter with a fresh connection per update."""
 
-    def __init__(self, hass, ip: str, port: int, sn: str):
+    POLL_INTERVAL = 5
+    RECONNECT_DELAY = 10
+
+    def __init__(self, hass, ip: str, port: int, sn: str, config_entry=None):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name="inverter_stream",
         )
         self.ip = ip
@@ -125,13 +130,25 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
         self.connected = False
         self.running = True
 
-        # Start streaming
-        asyncio.create_task(self._stream_loop())
+        self._stream_task = hass.async_create_task(self._stream_loop())
+
+    async def async_shutdown(self):
+        """Stop the inverter stream."""
+        if not self.running:
+            return
+
+        self.running = False
+        self._stream_task.cancel()
+        try:
+            await self._stream_task
+        except asyncio.CancelledError:
+            pass
+        await super().async_shutdown()
 
     async def _stream_loop(self):
-        """Consume inverter data from stream_inverter_data()."""
+        """Poll inverter data and reconnect after communication failures."""
 
-        from envertech_local import stream_inverter_data
+        from envertech_local import get_inverter_data
 
         device = {
             "ip": self.ip,
@@ -141,38 +158,33 @@ class InverterSocketCoordinator(DataUpdateCoordinator):
 
         while self.running:
             try:
-                async for update in stream_inverter_data(device, interval=5):
+                result = await get_inverter_data(
+                    device, port=self.port, timeout=10
+                )
+                if not isinstance(result, tuple) or not result[0]:
+                    raise UpdateFailed("No inverter data received")
 
-                    if isinstance(update, dict) and "error" in update:
-                        self.connected = False
-                        continue
+                parsed_data, panel_count, _ = result
+                self.number_of_panels = panel_count or 0
 
-                    parsed_data = update
+                for key, val in parsed_data.items():
+                    if isinstance(val, (int, float)):
+                        self.data[key] = round(val, 2)
+                    else:
+                        self.data[key] = val
 
-                    # Count panels
-                    panel_ids = [
-                        key.split("_")[0]
-                        for key in parsed_data.keys()
-                        if "_" in key and key[0].isdigit()
-                    ]
-                    self.number_of_panels = len(set(panel_ids))
+                self.connected = True
+                self.data_ready = True
+                self.async_set_updated_data(self.data)
+                await asyncio.sleep(self.POLL_INTERVAL)
 
-                    # Store all values
-                    for key, val in parsed_data.items():
-                        if isinstance(val, (int, float)):
-                            self.data[key] = round(val, 2)
-                        else:
-                            self.data[key] = val
-
-                    self.connected = True
-                    self.data_ready = True
-
-                    # Notify HA
-                    self.async_set_updated_data(self.data)
-
-            except Exception as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
                 self.connected = False
-                await asyncio.sleep(10)
+                self.async_set_update_error(UpdateFailed(str(err)))
+                _LOGGER.warning("Inverter stream disconnected: %s", err)
+                await asyncio.sleep(self.RECONNECT_DELAY)
 
 
 class InverterSensor(CoordinatorEntity, SensorEntity):
